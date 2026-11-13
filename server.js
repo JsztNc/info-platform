@@ -5,9 +5,11 @@
  * 功能：
  *   1) 权限查询接口  GET  /api/check?app=程序名&code=授权码
  *      -> {"ok":true,"app":"日报工具","owner":"张三","expires":"2026-12-31","msg":"授权有效"}
- *   2) 消息反馈接口  POST /api/feedback  {app, code, user, content}
+ *      设备模式（V1.15）：GET /api/check?app=程序名&device=设备唯一ID&name=计算机名&user=&os=&ver=
+ *      -> 首次上报自动登记并授权；管理员在后台停用后同设备返回 ok:false
+ *   2) 消息反馈接口  POST /api/feedback  {app, code, device, user, content}
  *      -> {"ok":true}   管理端后台可查看、标记已读、删除
- *   3) 管理端       /      密码登录后管理授权记录与反馈
+ *   3) 管理端       /      密码登录后管理授权记录、设备与反馈
  *
  * 数据：data.json（同目录），每次改动原子落盘。
  * 端口：process.env.PORT || 3000
@@ -33,17 +35,18 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const PORT = Number(process.env.PORT || 3000);
 
 // ============ 数据存取 ============
-let data = { records: [], feedback: [], seq: 1 };
+let data = { records: [], feedback: [], devices: [], seq: 1 };
 
 function load() {
   try {
     data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     if (!Array.isArray(data.records)) data.records = [];
     if (!Array.isArray(data.feedback)) data.feedback = [];
+    if (!Array.isArray(data.devices)) data.devices = [];
     if (!data.seq) data.seq = 1;
   } catch (e) {
     // 首次运行或文件损坏：用默认空数据，不覆盖已有文件内容为空时才初始化
-    data = { records: [], feedback: [], seq: 1 };
+    data = { records: [], feedback: [], devices: [], seq: 1 };
   }
 }
 
@@ -88,6 +91,13 @@ function isExpired(expires) {
   return new Date(expires + 'T23:59:59').getTime() < Date.now();
 }
 
+// 客户端 IP（云端有反向代理，优先 X-Forwarded-For）
+function clientIp(req) {
+  const xf = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const ip = xf || (req.socket && req.socket.remoteAddress) || '';
+  return ip.replace(/^::ffff:/, '');
+}
+
 // ============ 路由 ============
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -112,8 +122,65 @@ const server = http.createServer(async (req, res) => {
   // ---------- 1. 权限查询（给其他程序调用，无需登录） ----------
   if (p === '/api/check' && req.method === 'GET') {
     const app = (url.searchParams.get('app') || '').trim();
+    if (!app) return json(res, 200, { ok: false, msg: '缺少 app 参数' });
+
+    // ---- 设备模式（V1.15）：程序启动时上报本机 ----
+    // 首次出现自动登记并授权；管理员在后台点「停用」后，同一设备立即被拦。
+    // 设备标识由程序生成（计算机名 + 网卡 MAC 后 6 位），改名不影响统计。
+    const did = (url.searchParams.get('device') || '').trim();
+    if (did) {
+      const now = today();
+      const ip = clientIp(req);
+      const name = (url.searchParams.get('name') || '').trim();
+      const user = (url.searchParams.get('user') || '').trim();
+      const osName = (url.searchParams.get('os') || '').trim();
+      const ver = (url.searchParams.get('ver') || '').trim();
+
+      let dev = data.devices.find(d => d.app === app && d.device === did);
+      const first = !dev;
+      if (first) {
+        dev = {
+          id: nextId(), app, device: did, name: name || did,
+          user, os: osName, ver, ip,
+          status: 'enabled', note: '', created: now, last: now, count: 1, auto: true,
+        };
+        data.devices.push(dev);
+        save();
+      } else {
+        const touched = dev.last !== now;      // 时间戳按分钟，最多每分钟落盘一次
+        dev.last = now;
+        dev.count = (dev.count || 0) + 1;
+        if (name) dev.name = name;
+        if (user) dev.user = user;
+        if (osName) dev.os = osName;
+        if (ver) dev.ver = ver;
+        if (ip) dev.ip = ip;
+        if (touched) save();
+      }
+
+      const brief = { app, device: dev.name, device_id: dev.device };
+      if (dev.status === 'disabled')
+        return json(res, 200, Object.assign({
+          ok: false, msg: '本机使用权限已被管理员停用（设备：' + dev.name + '）' }, brief));
+      if (isExpired(dev.expires))
+        return json(res, 200, Object.assign({
+          ok: false, msg: '本机授权已过期（' + dev.expires + '）' }, brief));
+
+      // 兼容：若后台单独为这个设备号建过授权码并停用，一并拦下
+      const rec0 = data.records.find(r => r.app === app && r.code === did);
+      if (rec0 && rec0.status === 'disabled')
+        return json(res, 200, Object.assign({ ok: false, msg: '授权已停用' }, brief));
+
+      return json(res, 200, Object.assign({
+        ok: true, first, auto: true, count: dev.count,
+        msg: first ? '首次使用，已自动授权' : '授权有效',
+        owner: (rec0 && rec0.owner) || dev.user || '',
+        expires: (rec0 && rec0.expires) || '永久',
+      }, brief));
+    }
+
     const code = (url.searchParams.get('code') || '').trim();
-    if (!app || !code) return json(res, 200, { ok: false, msg: '缺少 app 或 code 参数' });
+    if (!code) return json(res, 200, { ok: false, msg: '缺少 code 参数' });
     const rec = data.records.find(r => r.app === app && r.code === code);
     if (!rec) return json(res, 200, { ok: false, msg: '授权码不存在' });
     if (rec.status === 'disabled') return json(res, 200, { ok: false, msg: '授权已停用' });
@@ -134,6 +201,7 @@ const server = http.createServer(async (req, res) => {
       id: nextId(),
       app: String(b.app || '').trim(),
       code: String(b.code || '').trim(),
+      device: String(b.device || '').trim(),
       user: String(b.user || '').trim(),
       content,
       time: today(),
@@ -196,10 +264,42 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
 
+    // ---------- 设备管理（V1.15：程序启动自动上报，管理员可停用/删除） ----------
+    if (p === '/api/admin/devices' && req.method === 'GET') {
+      return json(res, 200, { ok: true, devices: data.devices });
+    }
+
+    if (p === '/api/admin/devices' && req.method === 'PUT') {
+      const b = await readBody(req);
+      const dev = data.devices.find(d => d.id === b.id);
+      if (!dev) return json(res, 200, { ok: false, msg: '设备不存在' });
+      if (b.status !== undefined) dev.status = b.status === 'disabled' ? 'disabled' : 'enabled';
+      if (b.note !== undefined) dev.note = String(b.note).trim();
+      if (b.name !== undefined && String(b.name).trim()) dev.name = String(b.name).trim();
+      if (b.expires !== undefined) dev.expires = String(b.expires).trim();
+      save();
+      return json(res, 200, { ok: true, device: dev });
+    }
+
+    if (p === '/api/admin/devices' && req.method === 'DELETE') {
+      const b = await readBody(req);
+      const n = data.devices.length;
+      if (b.all && b.all === 'disabled') {
+        // 一键清掉所有已停用设备（被停用的机器下次启动会重新自动登记）
+        data.devices = data.devices.filter(d => d.status !== 'disabled');
+        if (data.devices.length === n) return json(res, 200, { ok: false, msg: '没有已停用的设备' });
+        save();
+        return json(res, 200, { ok: true, deleted: n - data.devices.length });
+      }
+      data.devices = data.devices.filter(d => d.id !== b.id);
+      if (data.devices.length === n) return json(res, 200, { ok: false, msg: '设备不存在' });
+      save();
+      return json(res, 200, { ok: true });
+    }
+
     if (p === '/api/admin/feedback' && req.method === 'GET') {
       return json(res, 200, { ok: true, feedback: data.feedback });
     }
-
     if (p === '/api/admin/feedback' && req.method === 'PUT') {   // 标记已读
       const b = await readBody(req);
       const fb = data.feedback.find(f => f.id === b.id);

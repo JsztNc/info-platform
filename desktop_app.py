@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""信息平台 桌面管理端 V1.14
+"""信息平台 桌面管理端 V1.15
 
 脱离网页：双击 exe 就是管理窗口，数据全部在云端，换任何 Windows 电脑
 双击就能用（Win10/11 自带 .NET，无需装 Python）。
   - 授权管理：新增 / 保存 / 停用·启用 / 删除 / 刷新
+  - 设备管理：程序启动自动上报的设备列表，可停用（禁止该机器使用）/ 启用 / 备注
   - 消息反馈：查看 / 标已读 / 删除，未读数显示在页签标题上
 
 平台地址写死在 CONFIG 区，要换地址改这一处重新打包即可。
@@ -31,7 +32,7 @@ from System.Windows.Forms import (
 # ================= CONFIG =================
 PLATFORM_URL = "https://info-platform.app.workbuddy.host"
 SHARECODE = "KC4MIHDOVT"
-APP_VER = "1.14"
+APP_VER = "1.15"
 TIMEOUT = 15
 
 C_BLUE = Color.FromArgb(31, 111, 235)
@@ -205,13 +206,16 @@ def open_main(password):
         threading.Thread(target=work, daemon=True).start()
 
     def reload_all():
-        """重新拉授权+反馈"""
+        """重新拉授权+设备+反馈"""
         def work():
-            return api("/api/admin/records", password=password), api("/api/admin/feedback", password=password)
+            return (api("/api/admin/records", password=password),
+                    api("/api/admin/devices", password=password),
+                    api("/api/admin/feedback", password=password))
 
         def done(res):
             fill_grid(res[0].get("records", []))
-            fill_feedback(res[1].get("feedback", []))
+            fill_devices(res[1].get("devices", []))
+            fill_feedback(res[2].get("feedback", []))
 
         bg(form, work, done, "刷新中…")
 
@@ -359,6 +363,158 @@ def open_main(password):
     page1.Controls.Add(mk_label("改完单元格后点「保存选中」；到期日格式 2026-12-31，留空 = 永久", 10, y + 40,
                                 size=9, color=C_GRAY))
 
+    # ================= 页签3：设备管理 =================
+    page3 = TabPage()
+    page3.Text = "设备管理"
+    tabs.TabPages.Add(page3)
+
+    dgrid = DataGridView()
+    dgrid.Location = Point(10, 12)
+    dgrid.Size = Size(876, 470)
+    dgrid.AllowUserToAddRows = False
+    dgrid.AllowUserToDeleteRows = False
+    dgrid.RowHeadersVisible = False
+    dgrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect
+    dgrid.BackgroundColor = Color.White
+    dgrid.Font = Font("Microsoft YaHei", 9.5)
+    dcols = [("app", "程序", 85, True), ("name", "设备名", 125, False),
+             ("user", "用户", 85, True), ("ip", "IP", 100, True),
+             ("created", "首次", 130, True), ("last", "最近", 130, True),
+             ("count", "次数", 42, True), ("status", "状态", 55, True),
+             ("note", "备注", 100, False)]
+    for key, title, w, ro in dcols:
+        c = DataGridViewTextBoxColumn()
+        c.Name = key
+        c.HeaderText = title
+        c.Width = w
+        c.ReadOnly = ro
+        c.MaxInputLength = 200
+        dgrid.Columns.Add(c)
+    page3.Controls.Add(dgrid)
+
+    def fill_devices(items):
+        dgrid.Rows.Clear()
+        off = 0
+        for d in items:
+            i = dgrid.Rows.Add()
+            row = dgrid.Rows[i]
+            dis = d.get("status") == "disabled"
+            if dis:
+                off += 1
+            row.Cells[0].Value = d.get("app", "")
+            row.Cells[1].Value = d.get("name") or d.get("device", "")
+            row.Cells[2].Value = d.get("user", "")
+            row.Cells[3].Value = d.get("ip", "")
+            row.Cells[4].Value = d.get("created", "")
+            row.Cells[5].Value = d.get("last", "")
+            row.Cells[6].Value = d.get("count", "")
+            row.Cells[7].Value = "已停用" if dis else "允许"
+            row.Cells[8].Value = d.get("note", "")
+            if dis:
+                row.DefaultCellStyle.ForeColor = C_GRAY
+            row.Tag = d
+        if items:
+            page3.Text = "设备管理 (%d%s)" % (len(items), ("，停用 %d" % off) if off else "")
+        else:
+            page3.Text = "设备管理"
+
+    def dev_cur():
+        return dgrid.CurrentRow
+
+    def on_dev_toggle(sender, args):
+        row = dev_cur()
+        if row is None:
+            return
+        d = row.Tag
+        new_status = "enabled" if d.get("status") == "disabled" else "disabled"
+        if new_status == "disabled":
+            if MessageBox.Show(form, "停用「%s」？\n该机器下次打开程序会被拦下并提示联系管理员。"
+                               % (d.get("name") or d.get("device")),
+                               "确认停用", MessageBoxButtons.YesNo) != DialogResult.Yes:
+                return
+
+        def work():
+            return api("/api/admin/devices", "PUT", {"id": d["id"], "status": new_status}, password=password)
+
+        bg(form, work, lambda res: reload_all(), "切换设备状态…")
+
+    def on_dev_save(sender, args):
+        row = dev_cur()
+        if row is None:
+            return
+        d = row.Tag
+        note = (row.Cells[8].Value or "").strip()
+
+        def work():
+            return api("/api/admin/devices", "PUT", {"id": d["id"], "note": note}, password=password)
+
+        bg(form, work, lambda res: reload_all(), "保存备注…")
+
+    def on_dev_del(sender, args):
+        row = dev_cur()
+        if row is None:
+            return
+        d = row.Tag
+        if MessageBox.Show(form, "删除设备「%s」的记录？\n（该机器下次启动会重新自动登记 = 重新放行；只想禁用请用「停用/启用」）"
+                           % (d.get("name") or d.get("device")),
+                           "确认删除", MessageBoxButtons.YesNo) != DialogResult.Yes:
+            return
+
+        def work():
+            return api("/api/admin/devices", "DELETE", {"id": d["id"]}, password=password)
+
+        bg(form, work, lambda res: reload_all(), "删除中…")
+
+    def on_dev_clear_off(sender, args):
+        if MessageBox.Show(form, "清空全部「已停用」的设备记录？\n这些机器下次启动会重新自动登记并被放行。",
+                           "确认清理", MessageBoxButtons.YesNo) != DialogResult.Yes:
+            return
+
+        def work():
+            return api("/api/admin/devices", "DELETE", {"all": "disabled"}, password=password)
+
+        def done(res):
+            MessageBox.Show(form, "已清理 %s 条" % res.get("deleted", 0), "完成")
+            reload_all()
+
+        bg(form, work, done, "清理中…")
+
+    def on_dev_detail(sender, args):
+        row = dev_cur()
+        if row is None:
+            return
+        d = row.Tag or {}
+        txt = ("程序：%s\r\n设备名：%s\r\n设备ID：%s\r\n登录用户：%s\r\n系统：%s\r\n程序版本：%s\r\n"
+               "IP：%s\r\n首次登记：%s\r\n最近上报：%s\r\n累计上报：%s 次\r\n状态：%s\r\n备注：%s"
+               % (d.get("app", "-"), d.get("name", "-"), d.get("device", "-"), d.get("user", "-"),
+                  d.get("os", "-"), ("v" + d["ver"]) if d.get("ver") else "-", d.get("ip", "-"),
+                  d.get("created", "-"), d.get("last", "-"), d.get("count", 0),
+                  "已停用" if d.get("status") == "disabled" else "允许",
+                  d.get("note") or "（无）"))
+        MessageBox.Show(form, txt, "设备详情")
+
+    dgrid.DoubleClick += on_dev_detail
+
+    y3 = 492
+    dev_btns = [
+        mk_button("刷新", 10, y3, 104, 34, color=C_BLUE),
+        mk_button("停用/启用", 124, y3, 120, 34, color=C_PURPLE),
+        mk_button("保存备注", 254, y3, 104, 34, color=C_GREEN),
+        mk_button("删除", 368, y3, 104, 34, color=C_RED),
+        mk_button("清空已停用", 482, y3, 120, 34, color=None),
+        mk_button("打开网页", 782, y3, 104, 34, color=None),
+    ]
+    dev_btns[0].Click += lambda s, a: reload_all()
+    dev_btns[1].Click += on_dev_toggle
+    dev_btns[2].Click += on_dev_save
+    dev_btns[3].Click += on_dev_del
+    dev_btns[4].Click += on_dev_clear_off
+    dev_btns[5].Click += open_web
+    for b in dev_btns:
+        page3.Controls.Add(b)
+    page3.Controls.Add(mk_label("程序启动时自动上报设备名并自动授权；双击某行看完整信息（系统/版本/设备ID）",
+                                10, y3 + 40, size=9, color=C_GRAY))
+
     # ================= 页签2：消息反馈 =================
     page2 = TabPage()
     page2.Text = "消息反馈"
@@ -406,9 +562,9 @@ def open_main(password):
         return lv.SelectedItems[0] if lv.SelectedItems.Count else None
 
     def _full_text(f):
-        head = "时间：%s　　程序：%s　　用户：%s　　授权码：%s　　状态：%s" % (
+        head = "时间：%s　　程序：%s　　用户：%s　　设备：%s　　授权码：%s　　状态：%s" % (
             f.get("time", "-"), f.get("app", "-"), f.get("user", "匿名"),
-            f.get("code") or "-", "已读" if f.get("read") else "新")
+            f.get("device") or "-", f.get("code") or "-", "已读" if f.get("read") else "新")
         return head + "\r\n" + "-" * 72 + "\r\n" + (f.get("content") or "")
 
     def show_detail(sender=None, args=None):
@@ -550,6 +706,11 @@ def selftest(pwd):
     ok, res = check_conn(pwd or "x")
     out.append("连接/鉴权: %s" % ("OK, %d 条授权" % len(res) if ok else res))
     if ok:
+        try:
+            r = api("/api/admin/devices", password=pwd)
+            out.append("设备接口: OK, %d 台" % len(r.get("devices", [])))
+        except Exception as e:
+            out.append("设备接口: %s" % e)
         try:
             r = api("/api/admin/feedback", password=pwd)
             out.append("反馈接口: OK, %d 条" % len(r.get("feedback", [])))

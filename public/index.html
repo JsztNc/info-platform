@@ -53,6 +53,7 @@
     <h1>信息平台</h1>
     <div class="tabs">
       <button id="tabAuth" class="on" onclick="switchTab('auth')">授权管理</button>
+      <button id="tabDev" onclick="switchTab('dev')">设备管理 <span id="devNum" style="color:#ffd33d"></span></button>
       <button id="tabFb" onclick="switchTab('fb')">消息反馈 <span id="fbDot" style="color:#ffd33d"></span></button>
       <button id="tabApi" onclick="switchTab('api')">接入说明</button>
     </div>
@@ -79,6 +80,29 @@
       </div>
     </section>
 
+    <!-- 设备管理 -->
+    <section id="pageDev" style="display:none">
+      <div class="card">
+        <div class="toolbar">
+          <b>已登记设备</b>
+          <span class="muted">程序启动时自动上报设备名并自动授权；这里点「停用」后该机器下次启动会被拦</span>
+          <button class="btn ghost" style="margin-left:auto" onclick="loadDev()">刷新</button>
+          <button class="btn danger" onclick="delDisabledDev()">清空已停用</button>
+        </div>
+        <table id="devTbl">
+          <thead><tr>
+            <th style="width:110px">程序</th><th style="width:150px">设备名</th>
+            <th style="width:90px">用户</th><th style="width:130px">系统 / 版本</th>
+            <th style="width:110px">IP</th><th style="width:120px">首次</th>
+            <th style="width:120px">最近</th><th style="width:60px">次数</th>
+            <th style="width:70px">状态</th><th style="width:150px">备注</th>
+            <th style="width:130px">操作</th>
+          </tr></thead>
+          <tbody id="devRows"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- 消息反馈 -->
     <section id="pageFb" style="display:none">
       <div class="card">
@@ -98,11 +122,16 @@
         <p style="margin-bottom:8px"><b>1）查询权限</b>（GET，无需登录）：</p>
         <div class="api-box" id="apiCheck">https://这里填平台地址/api/check?app=日报工具&code=授权码</div>
         <p class="muted">返回：<code>{"ok":true,"msg":"授权有效","owner":"张三","expires":"2026-12-31"}</code>；停用/过期/不存在时 <code>ok:false</code> 并带原因。</p>
+        <p style="margin:14px 0 8px"><b>1.1）设备模式（推荐）</b>——程序启动时上报本机，首次自动登记并授权：</p>
+        <div class="api-box" id="apiDev">GET /api/check?app=程序名&device=设备唯一ID&name=计算机名&user=用户名&os=系统&ver=程序版本&sharecode=…</div>
+        <p class="muted">首次返回 <code>{"ok":true,"first":true,"msg":"首次使用，已自动授权"}</code>，设备自动出现在「设备管理」；
+          管理员在那里点「停用」后，同一设备再上报会返回 <code>{"ok":false,"msg":"本机使用权限已被管理员停用…"}</code>。
+          设备已登记但网络不通时程序应「放行」而不是拦截（fail-open）。</p>
         <p style="margin:14px 0 8px"><b>2）上报反馈</b>（POST，无需登录）：</p>
         <div class="api-box">POST https://这里填平台地址/api/feedback
 Content-Type: application/json
 
-{"app":"日报工具","code":"授权码","user":"张三","content":"反馈内容"}</div>
+{"app":"日报工具","code":"授权码","device":"设备名","user":"张三","content":"反馈内容"}</div>
         <p class="muted">Python 示例：<code>requests.post(URL+"/api/feedback", json={"app":"日报工具","code":c,"user":u,"content":t})</code></p>
       </div>
     </section>
@@ -113,7 +142,7 @@ Content-Type: application/json
 
 <script>
 let PASS = sessionStorage.getItem('plat_pass') || '';
-let records = [], feedback = [];
+let records = [], feedback = [], devices = [];
 
 function toast(t){ const el=document.getElementById('toast'); el.textContent=t; el.style.display='block'; setTimeout(()=>el.style.display='none',2200); }
 
@@ -130,15 +159,17 @@ function login(){
     sessionStorage.setItem('plat_pass', PASS);
     document.getElementById('loginBox').style.display='none';
     document.getElementById('main').style.display='block';
-    records = r.records; renderRecords(); loadFb();
+    records = r.records; renderRecords(); loadDev(); loadFb();
   });
 }
 function logout(){ sessionStorage.removeItem('plat_pass'); location.reload(); }
 
 function switchTab(t){
-  for(const [id,p] of [['tabAuth','pageAuth'],['tabFb','pageFb'],['tabApi','pageApi']]){
-    document.getElementById(id).classList.toggle('on', id==='tab'+(t==='auth'?'Auth':t==='fb'?'Fb':'Api'));
-    document.getElementById(p).style.display = (id==='tab'+(t==='auth'?'Auth':t==='fb'?'Fb':'Api'))?'':'none';
+  const map = {auth:['tabAuth','pageAuth'], dev:['tabDev','pageDev'], fb:['tabFb','pageFb'], api:['tabApi','pageApi']};
+  for(const k in map){
+    const ids = map[k];
+    document.getElementById(ids[0]).classList.toggle('on', k===t);
+    document.getElementById(ids[1]).style.display = (k===t) ? '' : 'none';
   }
 }
 
@@ -200,6 +231,65 @@ function toggleStatus(id){
   });
 }
 
+/* ---------------- 设备管理 ---------------- */
+function loadDev(){
+  api('/api/admin/devices').then(r=>{
+    if(!r.ok) return toast(r.msg||'读取设备失败');
+    devices = r.devices || []; renderDevices();
+  });
+}
+
+function renderDevices(){
+  const off = devices.filter(d=>d.status==='disabled').length;
+  document.getElementById('devNum').textContent = devices.length ? devices.length : '';
+  const tb = document.getElementById('devRows');
+  tb.innerHTML = devices.map(d=>{
+    const st = d.status==='disabled'
+      ? '<span class="badge off">已停用</span>' : '<span class="badge ok">允许</span>';
+    return `<tr data-did="${d.id}">
+      <td>${esc(d.app||'')}</td>
+      <td>${esc(d.name||d.device||'')}</td>
+      <td>${esc(d.user||'-')}</td>
+      <td>${esc((d.os||'-')+' / '+(d.ver?'v'+d.ver:'-'))}</td>
+      <td>${esc(d.ip||'-')}</td>
+      <td>${esc(d.created||'')}</td>
+      <td>${esc(d.last||'')}</td>
+      <td>${d.count||0}</td>
+      <td>${st}</td>
+      <td><input value="${esc(d.note||'')}" data-k="note"></td>
+      <td>
+        <button class="btn ghost" onclick="toggleDev(${d.id})">${d.status==='disabled'?'启用':'停用'}</button>
+        <button class="btn primary" onclick="saveDev(${d.id})">保存</button>
+        <button class="btn danger" onclick="delDev(${d.id})">删除</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">还没有设备上报。程序打开后会自动出现在这里。</td></tr>';
+  if(off) document.getElementById('devNum').textContent = devices.length + '（停用' + off + '）';
+}
+
+function toggleDev(id){
+  const d = devices.find(x=>x.id===id);
+  api('/api/admin/devices',{method:'PUT',body:JSON.stringify({id,status:d.status==='disabled'?'enabled':'disabled'})})
+    .then(r=>{ if(!r.ok) return toast(r.msg); Object.assign(d, r.device); renderDevices();
+      toast(d.status==='disabled'?'已停用，该设备下次启动会被拦':'已恢复允许'); });
+}
+function saveDev(id){
+  const tr = document.querySelector(`tr[data-did="${id}"]`);
+  const note = tr.querySelector('input[data-k="note"]').value.trim();
+  api('/api/admin/devices',{method:'PUT',body:JSON.stringify({id,note})})
+    .then(r=>{ if(!r.ok) return toast(r.msg); Object.assign(devices.find(x=>x.id===id), r.device); renderDevices(); toast('已保存'); });
+}
+function delDev(id){
+  if(!confirm('删除这条设备记录？该机器下次启动会重新自动登记（等于重新放行）。')) return;
+  api('/api/admin/devices',{method:'DELETE',body:JSON.stringify({id})})
+    .then(r=>{ if(!r.ok) return toast(r.msg); devices = devices.filter(x=>x.id!==id); renderDevices(); toast('已删除'); });
+}
+function delDisabledDev(){
+  if(!confirm('清空所有已停用的设备记录？这些机器下次启动会重新自动登记并被放行。')) return;
+  api('/api/admin/devices',{method:'DELETE',body:JSON.stringify({all:'disabled'})})
+    .then(r=>{ if(!r.ok) return toast(r.msg); toast('已清理 '+r.deleted+' 条'); loadDev(); });
+}
+
 function loadFb(){
   api('/api/admin/feedback').then(r=>{
     feedback = r.feedback||[];
@@ -209,7 +299,7 @@ function loadFb(){
       <div class="fb-item">
         <div class="fb-meta">
           ${f.read?'':'<span class="badge unread">新</span> '}
-          <b>${esc(f.app||'?')}</b> · ${esc(f.user||'匿名')} · ${esc(f.time)} ${f.code?('· 授权码 '+esc(f.code)):''}
+          <b>${esc(f.app||'?')}</b> · ${esc(f.user||'匿名')} · ${esc(f.time)} ${f.device?('· 设备 '+esc(f.device)):''} ${f.code?('· 授权码 '+esc(f.code)):''}
           <span style="float:right">
             ${f.read?'':'<button class="btn ghost" onclick="markRead('+f.id+')">标为已读</button> '}
             <button class="btn danger" onclick="delFb(${f.id})">删除</button>

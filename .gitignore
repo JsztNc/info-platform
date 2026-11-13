@@ -17,3 +17,6 @@ selftest.txt
 config.local.json
 __pycache__/
 *.pyc
+
+# 上传前的数据快照
+_cloud_backup_*.json
