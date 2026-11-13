@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""信息平台 桌面管理端 V1.11
+"""信息平台 桌面管理端 V1.12
 
 脱离网页：双击 exe 就是管理窗口，数据全部在云端，换任何 Windows 电脑
 双击就能用（Win10/11 自带 .NET，无需装 Python）。
@@ -31,7 +31,7 @@ from System.Windows.Forms import (
 # ================= CONFIG =================
 PLATFORM_URL = "https://info-platform.app.workbuddy.host"
 SHARECODE = "KC4MIHDOVT"
-APP_VER = "1.11"
+APP_VER = "1.12"
 TIMEOUT = 15
 
 C_BLUE = Color.FromArgb(31, 111, 235)
@@ -452,11 +452,26 @@ def main():
         pwd = sys.argv[idx + 1] if len(sys.argv) > idx + 1 else ""
         selftest(pwd)
         return
-    Application.EnableVisualStyles()
-    login = open_login()
-    if login.ShowDialog() == 1:
-        pwd, _records = login.Tag
-        Application.Run(open_main(pwd))
+    try:
+        Application.EnableVisualStyles()
+        login = open_login()
+        # 注意：pythonnet 下 EnableVisualStyles 之后 ShowDialog() 会瞬间自动返回，
+        # 窗口一闪就退（V1.11 打不开的根因）。必须走 Application.Run。
+        Application.Run(login)
+        if login.DialogResult == DialogResult.OK:
+            pwd, _records = login.Tag
+            Application.Run(open_main(pwd))
+    except Exception:
+        # 兜底：任何启动失败都落一份日志在 exe 旁边，杜绝"无声退出"没法排查
+        import traceback
+        import datetime
+        dst = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])),
+                           "启动错误日志.txt")
+        with open(dst, "a", encoding="utf-8") as f:
+            f.write("\n[%s]\n%s\n" % (
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                traceback.format_exc()))
+        raise
 
 
 if __name__ == "__main__":
