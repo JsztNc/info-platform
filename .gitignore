@@ -12,3 +12,6 @@ hello_test*
 st_out.txt
 st_err.txt
 selftest.txt
+
+# 密码等私密配置不进仓库
+config.local.json

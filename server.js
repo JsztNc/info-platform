@@ -20,8 +20,14 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// ============ 配置（要改密码就改这里） ============
-const ADMIN_PASS = 'REDACTED';          // 管理端登录密码
+// ============ 配置（密码放 config.local.json，不进仓库） ============
+// 同目录 config.local.json 格式：{ "ADMIN_PASS": "你的密码" }
+// 该文件已 gitignore，仓库里只有占位说明；没配则用占位密码，登录会失败提示去配置。
+let ADMIN_PASS = 'changeme';
+try {
+  const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.local.json'), 'utf8'));
+  if (cfg && cfg.ADMIN_PASS) ADMIN_PASS = String(cfg.ADMIN_PASS);
+} catch (e) { /* 无配置文件，用占位密码 */ }
 const DATA_FILE = path.join(__dirname, 'data.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PORT = Number(process.env.PORT || 3000);
