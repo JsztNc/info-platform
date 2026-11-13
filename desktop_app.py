@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""信息平台 桌面管理端 V1.12
+"""信息平台 桌面管理端 V1.13
 
 脱离网页：双击 exe 就是管理窗口，数据全部在云端，换任何 Windows 电脑
 双击就能用（Win10/11 自带 .NET，无需装 Python）。
@@ -24,14 +24,14 @@ from System.Drawing import Color, FontStyle, Font, Point, Size
 from System.Windows.Forms import (
     Application, DialogResult, DataGridViewSelectionMode, FormBorderStyle, FlatStyle,
     Button, DataGridView, DataGridViewTextBoxColumn, Form, FormStartPosition, Label, ListView,
-    ListViewItem, MessageBox, MessageBoxButtons, Panel, TabControl, TabPage,
+    ListViewItem, MessageBox, MessageBoxButtons, Panel, ScrollBars, TabControl, TabPage,
     TextBox, View,
 )
 
 # ================= CONFIG =================
 PLATFORM_URL = "https://info-platform.app.workbuddy.host"
 SHARECODE = "KC4MIHDOVT"
-APP_VER = "1.12"
+APP_VER = "1.13"
 TIMEOUT = 15
 
 C_BLUE = Color.FromArgb(31, 111, 235)
@@ -356,7 +356,7 @@ def open_main(password):
 
     lv = ListView()
     lv.Location = Point(10, 12)
-    lv.Size = Size(876, 470)
+    lv.Size = Size(876, 268)
     lv.View = View.Details
     lv.FullRowSelect = True
     lv.GridLines = True
@@ -364,6 +364,20 @@ def open_main(password):
     for title, w in [("时间", 120), ("程序", 110), ("用户", 90), ("授权码", 150), ("内容", 330), ("状态", 60)]:
         ch = lv.Columns.Add(title, w)
     page2.Controls.Add(lv)
+
+    # 详情面板：点选任意一条，下面直接显示完整内容（不截断）
+    page2.Controls.Add(mk_label("反馈详情（点选上方某条查看全文，双击可放大）", 12, 286,
+                                size=9, color=C_GRAY))
+    detail = TextBox()
+    detail.Location = Point(10, 308)
+    detail.Size = Size(876, 168)
+    detail.Multiline = True
+    detail.ReadOnly = True
+    detail.WordWrap = True
+    detail.ScrollBars = ScrollBars.Vertical
+    detail.Font = Font("Microsoft YaHei", 9.5)
+    detail.BackColor = Color.White
+    page2.Controls.Add(detail)
 
     def fill_feedback(items):
         lv.Items.Clear()
@@ -380,6 +394,57 @@ def open_main(password):
 
     def fb_cur():
         return lv.SelectedItems[0] if lv.SelectedItems.Count else None
+
+    def _full_text(f):
+        head = "时间：%s　　程序：%s　　用户：%s　　授权码：%s　　状态：%s" % (
+            f.get("time", "-"), f.get("app", "-"), f.get("user", "匿名"),
+            f.get("code") or "-", "已读" if f.get("read") else "新")
+        return head + "\r\n" + "-" * 72 + "\r\n" + (f.get("content") or "")
+
+    def show_detail(sender=None, args=None):
+        it = fb_cur()
+        if it is None:
+            detail.Text = ""
+            return
+        detail.Text = _full_text(it.Tag or {})
+        detail.SelectionStart = 0
+        detail.SelectionLength = 0
+
+    lv.SelectedIndexChanged += show_detail
+
+    def open_big(sender=None, args=None):
+        it = fb_cur()
+        if it is None:
+            return
+        f = it.Tag or {}
+        dlg = Form()
+        dlg.Text = "反馈详情 - %s / %s" % (f.get("app", "-"), f.get("user", "匿名"))
+        dlg.ClientSize = Size(760, 560)
+        dlg.StartPosition = FormStartPosition.CenterParent
+        dlg.FormBorderStyle = FormBorderStyle.FixedDialog
+        dlg.MaximizeBox = False
+        dlg.MinimizeBox = False
+        dlg.Font = Font("Microsoft YaHei", 10)
+        tb = TextBox()
+        tb.Location = Point(12, 12)
+        tb.Size = Size(736, 500)
+        tb.Multiline = True
+        tb.ReadOnly = True
+        tb.WordWrap = True
+        tb.ScrollBars = ScrollBars.Vertical
+        tb.Font = Font("Microsoft YaHei", 10.5)
+        tb.Text = _full_text(f)
+        tb.SelectionStart = 0
+        dlg.Controls.Add(tb)
+        ok = Button()
+        ok.Text = "关闭"
+        ok.Location = Point(660, 520)
+        ok.Size = Size(88, 30)
+        ok.Click += lambda s, a: dlg.Close()
+        dlg.Controls.Add(ok)
+        dlg.ShowDialog(form)
+
+    lv.DoubleClick += open_big
 
     def fb_read(sender, args):
         it = fb_cur()
