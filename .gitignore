@@ -15,3 +15,5 @@ selftest.txt
 
 # 密码等私密配置不进仓库
 config.local.json
+__pycache__/
+*.pyc
