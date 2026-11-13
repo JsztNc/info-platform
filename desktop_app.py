@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""信息平台 桌面管理端 V1.13
+"""信息平台 桌面管理端 V1.14
 
 脱离网页：双击 exe 就是管理窗口，数据全部在云端，换任何 Windows 电脑
 双击就能用（Win10/11 自带 .NET，无需装 Python）。
@@ -31,7 +31,7 @@ from System.Windows.Forms import (
 # ================= CONFIG =================
 PLATFORM_URL = "https://info-platform.app.workbuddy.host"
 SHARECODE = "KC4MIHDOVT"
-APP_VER = "1.13"
+APP_VER = "1.14"
 TIMEOUT = 15
 
 C_BLUE = Color.FromArgb(31, 111, 235)
@@ -332,18 +332,28 @@ def open_main(password):
         bg(form, work, done, "删除中…")
 
     y = 492
+
+    def open_web(sender=None, args=None):
+        """用系统默认浏览器打开网页版管理后台。"""
+        try:
+            os.startfile("%s/?sharecode=%s" % (PLATFORM_URL, SHARECODE))  # noqa: S606
+        except Exception as exc:
+            MessageBox.Show(form, "打不开浏览器：%s" % exc, "提示", MessageBoxButtons.OK)
+
     btns = [
         mk_button("＋ 新增授权", 10, y, 120, 34, color=C_BLUE),
         mk_button("保存选中", 140, y, 104, 34, color=C_GREEN),
         mk_button("停用/启用", 254, y, 104, 34, color=C_PURPLE),
         mk_button("删除选中", 368, y, 104, 34, color=C_RED),
+        mk_button("打开网页", 482, y, 110, 34, color=None),
         mk_button("刷新", 782, y, 104, 34, color=None),
     ]
     btns[0].Click += on_add
     btns[1].Click += on_save
     btns[2].Click += on_toggle
     btns[3].Click += on_del
-    btns[4].Click += lambda s, a: reload_all()
+    btns[4].Click += open_web
+    btns[5].Click += lambda s, a: reload_all()
     for b in btns:
         page1.Controls.Add(b)
     page1.Controls.Add(mk_label("改完单元格后点「保存选中」；到期日格式 2026-12-31，留空 = 永久", 10, y + 40,
@@ -478,15 +488,55 @@ def open_main(password):
 
         bg(form, work, done, "删除中…")
 
+    def fb_del_read(sender, args):
+        """一键删除全部已读反馈。"""
+        ids = [it.Tag.get("id") for it in lv.Items
+               if it.Tag and it.Tag.get("read") and it.Tag.get("id") is not None]
+        if not ids:
+            MessageBox.Show(form, "没有已读的反馈。", "提示", MessageBoxButtons.OK)
+            return
+        ans = MessageBox.Show(form,
+                              "确定删除全部 %d 条已读反馈？\n未读的会保留，此操作不可恢复。" % len(ids),
+                              "确认删除", MessageBoxButtons.YesNo)
+        if ans != DialogResult.Yes:
+            return
+
+        def work():
+            ok_n = fail_n = 0
+            for i in ids:
+                try:
+                    r = api("/api/admin/feedback", "DELETE", {"id": i}, password=password)
+                    if r.get("ok"):
+                        ok_n += 1
+                    else:
+                        fail_n += 1
+                except Exception:
+                    fail_n += 1
+            return {"ok": True, "deleted": ok_n, "failed": fail_n}
+
+        def done(res):
+            d, f = res.get("deleted", 0), res.get("failed", 0)
+            msg = "已删除 %d 条已读反馈。" % d
+            if f:
+                msg += "\n%d 条删除失败（可能已被删或网络波动），可点「刷新」后重试。" % f
+            MessageBox.Show(form, msg, "完成", MessageBoxButtons.OK)
+            reload_all()
+
+        bg(form, work, done, "正在删除已读反馈…")
+
     y2 = 492
     fb_btns = [
         mk_button("刷新", 10, y2, 104, 34, color=C_BLUE),
         mk_button("标为已读", 124, y2, 104, 34, color=C_GREEN),
         mk_button("删除", 238, y2, 104, 34, color=C_RED),
+        mk_button("删除已读", 352, y2, 104, 34, color=C_PURPLE),
+        mk_button("打开网页", 466, y2, 104, 34, color=None),
     ]
     fb_btns[0].Click += lambda s, a: reload_all()
     fb_btns[1].Click += fb_read
     fb_btns[2].Click += fb_del
+    fb_btns[3].Click += fb_del_read
+    fb_btns[4].Click += open_web
     for b in fb_btns:
         page2.Controls.Add(b)
 
