@@ -1,0 +1,4 @@
+# 运行时数据不进仓库
+data.json
+data.json.tmp
+*.log

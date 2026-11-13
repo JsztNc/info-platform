@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>信息平台 · 授权与反馈后台</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", system-ui, sans-serif; background: #f0f2f5; color: #222; }
+  header { background: #1f6feb; color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 18px; }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header .tabs { display: flex; gap: 8px; margin-left: 20px; }
+  header .tabs button { background: rgba(255,255,255,.15); color: #fff; border: 0; padding: 7px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  header .tabs button.on { background: #fff; color: #1f6feb; font-weight: 600; }
+  main { max-width: 1080px; margin: 20px auto; padding: 0 16px; }
+  .card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid #eee; text-align: left; }
+  th { color: #666; font-weight: 600; background: #fafafa; }
+  td input, td select { border: 1px solid #ddd; border-radius: 4px; padding: 4px 6px; width: 100%; font-size: 13px; }
+  .btn { border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 14px; }
+  .btn.primary { background: #1f6feb; color: #fff; }
+  .btn.danger { background: #e5534b; color: #fff; }
+  .btn.ghost { background: #eef1f4; color: #444; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+  .badge.ok { background: #d4f7dc; color: #177a2c; }
+  .badge.off { background: #ffe0df; color: #b02a28; }
+  .badge.exp { background: #fff2d9; color: #9a6700; }
+  .badge.unread { background: #1f6feb; color: #fff; }
+  .fb-item { border-bottom: 1px solid #eee; padding: 12px 4px; }
+  .fb-meta { font-size: 12px; color: #888; margin-bottom: 4px; }
+  .fb-content { font-size: 14px; white-space: pre-wrap; word-break: break-all; }
+  #loginBox { max-width: 360px; margin: 90px auto; }
+  #loginBox input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; margin-bottom: 12px; }
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .muted { color: #888; font-size: 13px; }
+  .toast { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%); background: #333; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 14px; display: none; }
+  .api-box { background: #f6f8fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 10px 12px; font-family: Consolas, monospace; font-size: 13px; margin: 6px 0; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<!-- 登录框 -->
+<div id="loginBox" class="card">
+  <h2 style="margin-bottom:14px;font-size:18px;">信息平台 · 管理登录</h2>
+  <input type="password" id="pass" placeholder="管理密码" onkeydown="if(event.key==='Enter')login()">
+  <button class="btn primary" style="width:100%" onclick="login()">登 录</button>
+</div>
+
+<!-- 主界面 -->
+<div id="main" style="display:none">
+  <header>
+    <h1>信息平台</h1>
+    <div class="tabs">
+      <button id="tabAuth" class="on" onclick="switchTab('auth')">授权管理</button>
+      <button id="tabFb" onclick="switchTab('fb')">消息反馈 <span id="fbDot" style="color:#ffd33d"></span></button>
+      <button id="tabApi" onclick="switchTab('api')">接入说明</button>
+    </div>
+    <span style="margin-left:auto;font-size:13px;opacity:.85"><button class="btn ghost" onclick="logout()">退出</button></span>
+  </header>
+  <main>
+
+    <!-- 授权管理 -->
+    <section id="pageAuth">
+      <div class="card">
+        <div class="toolbar">
+          <b>授权记录</b>
+          <span class="muted">程序名 + 授权码唯一；到期留空 = 永久</span>
+          <button class="btn primary" style="margin-left:auto" onclick="addRow()">＋ 新增授权</button>
+        </div>
+        <table id="tbl">
+          <thead><tr>
+            <th style="width:150px">程序名</th><th style="width:170px">授权码</th>
+            <th style="width:110px">授权给</th><th style="width:120px">到期日</th>
+            <th>备注</th><th style="width:90px">状态</th><th style="width:150px">操作</th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 消息反馈 -->
+    <section id="pageFb" style="display:none">
+      <div class="card">
+        <div class="toolbar">
+          <b>程序反馈消息</b>
+          <span class="muted">用户在程序里提交的反馈会出现在这里</span>
+          <button class="btn ghost" style="margin-left:auto" onclick="loadFb()">刷新</button>
+        </div>
+        <div id="fbList"></div>
+      </div>
+    </section>
+
+    <!-- 接入说明 -->
+    <section id="pageApi" style="display:none">
+      <div class="card">
+        <h3 style="margin-bottom:10px">其他程序如何接入</h3>
+        <p style="margin-bottom:8px"><b>1）查询权限</b>（GET，无需登录）：</p>
+        <div class="api-box" id="apiCheck">https://这里填平台地址/api/check?app=日报工具&code=授权码</div>
+        <p class="muted">返回：<code>{"ok":true,"msg":"授权有效","owner":"张三","expires":"2026-12-31"}</code>；停用/过期/不存在时 <code>ok:false</code> 并带原因。</p>
+        <p style="margin:14px 0 8px"><b>2）上报反馈</b>（POST，无需登录）：</p>
+        <div class="api-box">POST https://这里填平台地址/api/feedback
+Content-Type: application/json
+
+{"app":"日报工具","code":"授权码","user":"张三","content":"反馈内容"}</div>
+        <p class="muted">Python 示例：<code>requests.post(URL+"/api/feedback", json={"app":"日报工具","code":c,"user":u,"content":t})</code></p>
+      </div>
+    </section>
+
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+let PASS = sessionStorage.getItem('plat_pass') || '';
+let records = [], feedback = [];
+
+function toast(t){ const el=document.getElementById('toast'); el.textContent=t; el.style.display='block'; setTimeout(()=>el.style.display='none',2200); }
+
+async function api(path, opt={}){
+  opt.headers = Object.assign({'Content-Type':'application/json','x-admin-pass':PASS}, opt.headers||{});
+  const r = await fetch(path, opt);
+  return r.json();
+}
+
+function login(){
+  PASS = document.getElementById('pass').value;
+  api('/api/admin/records').then(r=>{
+    if(!r.ok){ toast(r.msg||'密码错误'); return; }
+    sessionStorage.setItem('plat_pass', PASS);
+    document.getElementById('loginBox').style.display='none';
+    document.getElementById('main').style.display='block';
+    records = r.records; renderRecords(); loadFb();
+  });
+}
+function logout(){ sessionStorage.removeItem('plat_pass'); location.reload(); }
+
+function switchTab(t){
+  for(const [id,p] of [['tabAuth','pageAuth'],['tabFb','pageFb'],['tabApi','pageApi']]){
+    document.getElementById(id).classList.toggle('on', id==='tab'+(t==='auth'?'Auth':t==='fb'?'Fb':'Api'));
+    document.getElementById(p).style.display = (id==='tab'+(t==='auth'?'Auth':t==='fb'?'Fb':'Api'))?'':'none';
+  }
+}
+
+function renderRecords(){
+  const tb = document.getElementById('rows');
+  tb.innerHTML = records.map(r=>{
+    const expired = r.expires && new Date(r.expires+'T23:59:59') < new Date();
+    const st = r.status==='disabled' ? '<span class="badge off">停用</span>'
+      : expired ? '<span class="badge exp">已过期</span>' : '<span class="badge ok">有效</span>';
+    return `<tr data-id="${r.id}">
+      <td><input value="${esc(r.app)}" data-k="app"></td>
+      <td><input value="${esc(r.code)}" data-k="code"></td>
+      <td><input value="${esc(r.owner||'')}" data-k="owner"></td>
+      <td><input type="date" value="${esc(r.expires||'')}" data-k="expires"></td>
+      <td><input value="${esc(r.note||'')}" data-k="note"></td>
+      <td>${st}</td>
+      <td>
+        <button class="btn ghost" onclick="toggleStatus(${r.id})">${r.status==='disabled'?'启用':'停用'}</button>
+        <button class="btn primary" onclick="saveRow(${r.id})">保存</button>
+        <button class="btn danger" onclick="delRow(${r.id})">删除</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">还没有授权记录，点右上角「新增授权」</td></tr>';
+}
+
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+
+function addRow(){
+  api('/api/admin/records',{method:'POST',body:JSON.stringify({app:'新程序',code:genCode()})}).then(r=>{
+    if(!r.ok) return toast(r.msg);
+    records.push(r.record); renderRecords(); toast('已新增，填好内容后记得点「保存」');
+  });
+}
+function genCode(){ return Math.random().toString(36).slice(2,6).toUpperCase()+'-'+Math.random().toString(36).slice(2,10).toUpperCase(); }
+
+function saveRow(id){
+  const tr = document.querySelector(`tr[data-id="${id}"]`);
+  const b = {};
+  tr.querySelectorAll('input[data-k]').forEach(i=>{
+    let v = i.value.trim();
+    if(i.dataset.k==='code') v = v.toUpperCase();
+    b[i.dataset.k] = v;
+  });
+  api('/api/admin/records',{method:'PUT',body:JSON.stringify(Object.assign({id},b))}).then(r=>{
+    if(!r.ok) return toast(r.msg);
+    Object.assign(records.find(x=>x.id===id), r.record); renderRecords(); toast('已保存');
+  });
+}
+function delRow(id){
+  if(!confirm('确定删除这条授权？删除后该授权码立即失效。')) return;
+  api('/api/admin/records',{method:'DELETE',body:JSON.stringify({id})}).then(r=>{
+    records = records.filter(x=>x.id!==id); renderRecords(); toast('已删除');
+  });
+}
+function toggleStatus(id){
+  const rec = records.find(x=>x.id===id);
+  api('/api/admin/records',{method:'PUT',body:JSON.stringify({id,status:rec.status==='disabled'?'enabled':'disabled'})}).then(r=>{
+    Object.assign(rec, r.record); renderRecords(); toast(rec.status==='disabled'?'已停用':'已启用');
+  });
+}
+
+function loadFb(){
+  api('/api/admin/feedback').then(r=>{
+    feedback = r.feedback||[];
+    const un = feedback.filter(f=>!f.read).length;
+    document.getElementById('fbDot').textContent = un ? '●'.repeat(Math.min(un,3)) : '';
+    document.getElementById('fbList').innerHTML = feedback.map(f=>`
+      <div class="fb-item">
+        <div class="fb-meta">
+          ${f.read?'':'<span class="badge unread">新</span> '}
+          <b>${esc(f.app||'?')}</b> · ${esc(f.user||'匿名')} · ${esc(f.time)} ${f.code?('· 授权码 '+esc(f.code)):''}
+          <span style="float:right">
+            ${f.read?'':'<button class="btn ghost" onclick="markRead('+f.id+')">标为已读</button> '}
+            <button class="btn danger" onclick="delFb(${f.id})">删除</button>
+          </span>
+        </div>
+        <div class="fb-content">${esc(f.content)}</div>
+      </div>`).join('') || '<div class="muted" style="text-align:center;padding:24px">暂无反馈消息</div>';
+  });
+}
+function markRead(id){ api('/api/admin/feedback',{method:'PUT',body:JSON.stringify({id})}).then(loadFb); }
+function delFb(id){ api('/api/admin/feedback',{method:'DELETE',body:JSON.stringify({id})}).then(()=>{loadFb();toast('已删除');}); }
+
+if(PASS) login();
+</script>
+</body>
+</html>

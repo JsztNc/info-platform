@@ -1,0 +1,12 @@
+{
+  "name": "info-platform",
+  "version": "1.0.0",
+  "description": "江苏中天自研程序 云端授权 + 消息反馈平台",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
