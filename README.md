@@ -12,10 +12,12 @@
 
 ## 其他程序接入
 
+> 平台地址：`https://info-platform.app.workbuddy.host`（**所有请求都要带 `sharecode=KC4MIHDOVT`**）
+
 ### 1. 查询权限（GET，无需登录）
 
 ```
-GET https://<平台地址>/api/check?app=日报工具&code=授权码
+GET https://info-platform.app.workbuddy.host/api/check?app=日报工具&code=授权码&sharecode=KC4MIHDOVT
 ```
 
 返回：
@@ -39,7 +41,7 @@ if not r.get("ok"):
 ### 2. 上报反馈（POST，无需登录）
 
 ```
-POST https://<平台地址>/api/feedback
+POST https://info-platform.app.workbuddy.host/api/feedback?sharecode=KC4MIHDOVT
 Content-Type: application/json
 
 {"app": "日报工具", "code": "授权码", "user": "张三", "content": "反馈内容"}
